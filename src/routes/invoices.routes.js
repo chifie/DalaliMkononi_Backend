@@ -11,7 +11,7 @@ router.get('/',
   [
     query('page').optional().isInt({ min: 1 }),
     query('limit').optional().isInt({ min: 1, max: 100 }),
-    query('status').optional().isIn(['pending', 'paid', 'overdue', 'cancelled'])
+    query('status').optional().isIn(['pending', 'paid', 'overdue', 'cancelled']),
   ],
   validate,
   invoicesController.getMyInvoices
@@ -27,7 +27,7 @@ router.post('/',
     body('property_id').isUUID().withMessage('Valid property ID required'),
     body('amount').isFloat({ min: 0 }).withMessage('Valid amount required'),
     body('due_date').isDate().withMessage('Valid due date required'),
-    body('description').optional().trim()
+    body('description').optional().trim(),
   ],
   validate,
   invoicesController.createInvoice
@@ -37,7 +37,7 @@ router.put('/:id/pay',
   authenticate,
   [
     body('payment_method').trim().notEmpty().withMessage('Payment method required'),
-    body('payment_reference').trim().notEmpty().withMessage('Payment reference required')
+    body('payment_reference').trim().notEmpty().withMessage('Payment reference required'),
   ],
   validate,
   invoicesController.payInvoice
@@ -47,7 +47,7 @@ router.put('/:id/status',
   authenticate,
   authorize('landlord', 'admin'),
   [
-    body('status').isIn(['pending', 'paid', 'overdue', 'cancelled']).withMessage('Valid status required')
+    body('status').isIn(['pending', 'paid', 'overdue', 'cancelled']).withMessage('Valid status required'),
   ],
   validate,
   invoicesController.updateInvoiceStatus
