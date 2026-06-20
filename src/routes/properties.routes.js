@@ -16,7 +16,7 @@ router.get('/',
     query('limit').optional().isInt({ min: 1, max: 100 }),
     query('min_price').optional().isFloat({ min: 0 }),
     query('max_price').optional().isFloat({ min: 0 }),
-    query('bedrooms').optional().isInt({ min: 0 })
+    query('bedrooms').optional().isInt({ min: 0 }),
   ],
   validate,
   propertiesController.getAllProperties
@@ -39,7 +39,8 @@ router.post('/',
     body('category_id').isUUID().withMessage('Valid category required'),
     body('images').optional().isArray(),
     body('amenities').optional().isArray(),
-    body('is_featured').optional().isBoolean()
+    body('is_featured').optional().isBoolean(),
+    body('vacant').optional().isBoolean(),
   ],
   validate,
   propertiesController.createProperty
@@ -61,12 +62,15 @@ router.put('/:id',
     body('status').optional().isIn(['available', 'rented', 'maintenance']),
     body('images').optional().isArray(),
     body('amenities').optional().isArray(),
-    body('is_featured').optional().isBoolean()
+    body('is_featured').optional().isBoolean(),
+    body('vacant').optional().isBoolean(),
   ],
   validate,
   propertiesController.updateProperty
 );
 
 router.delete('/:id', authenticate, authorize('landlord', 'admin'), propertiesController.deleteProperty);
+
+router.patch('/:id/verify', authenticate, authorize('admin'), propertiesController.verifyProperty);
 
 export default router;
