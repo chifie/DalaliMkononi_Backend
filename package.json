@@ -1,19 +1,20 @@
 {
   "name": "dalalimkononi-backend",
-  "version": "1.1.0",
-  "description": "Backend for DalaliMkononi - Tanzania Real Estate & Rental Management Platform",
+  "version": "1.2.0",
+  "description": "Express.js + PostgreSQL backend for DalaliMkononi - Tanzania Real Estate & Rental Management Platform",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
+    "db:migrate": "node src/db/runMigrations.js",
+    "db:seed": "node src/db/runSeed.js",
     "build": "echo 'Build complete'"
   },
-  "keywords": ["real-estate", "tanzania", "rental", "property-management"],
+  "keywords": ["real-estate", "tanzania", "rental", "property-management", "postgresql"],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@supabase/supabase-js": "^2.45.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
@@ -22,6 +23,7 @@
     "express-validator": "^7.2.0",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
-    "morgan": "^1.10.0"
+    "morgan": "^1.10.0",
+    "pg": "^8.12.0"
   }
 }
