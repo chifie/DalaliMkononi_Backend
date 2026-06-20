@@ -1,15 +1,11 @@
-import { supabase } from '../db/supabase.js';
+import { query } from '../db/pool.js';
 
-export const getAllCategories = async (req, res, next) => {
+export const getAllCategories = async (_req, res, next) => {
   try {
-    const { data: categories, error } = await supabase
-      .from('categories')
-      .select('*')
-      .order('name', { ascending: true });
-
-    if (error) throw error;
-
-    res.json({ categories });
+    const { rows } = await query(
+      'SELECT * FROM categories ORDER BY name ASC'
+    );
+    res.json({ categories: rows });
   } catch (error) {
     next(error);
   }
@@ -17,19 +13,16 @@ export const getAllCategories = async (req, res, next) => {
 
 export const getCategoryBySlug = async (req, res, next) => {
   try {
-    const { slug } = req.params;
+    const { rows } = await query(
+      'SELECT * FROM categories WHERE slug = $1',
+      [req.params.slug]
+    );
 
-    const { data: category, error } = await supabase
-      .from('categories')
-      .select('*')
-      .eq('slug', slug)
-      .single();
-
-    if (error || !category) {
+    if (!rows.length) {
       return res.status(404).json({ error: 'Category not found' });
     }
 
-    res.json({ category });
+    res.json({ category: rows[0] });
   } catch (error) {
     next(error);
   }
@@ -42,32 +35,38 @@ export const getCategoryProperties = async (req, res, next) => {
     const limit = parseInt(req.query.limit) || 20;
     const offset = (page - 1) * limit;
 
-    const { data: category } = await supabase
-      .from('categories')
-      .select('id')
-      .eq('slug', slug)
-      .single();
+    const { rows: cat } = await query(
+      'SELECT id FROM categories WHERE slug = $1',
+      [slug]
+    );
 
-    if (!category) {
+    if (!cat.length) {
       return res.status(404).json({ error: 'Category not found' });
     }
 
-    const { data: properties, error, count } = await supabase
-      .from('properties')
-      .select('*, landlord:users!properties_landlord_id_fkey(id, full_name, phone, avatar_url)', { count: 'exact' })
-      .eq('category_id', category.id)
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+    const { rows: properties } = await query(
+      `SELECT p.*,
+              u.full_name AS landlord_name, u.phone AS landlord_phone, u.avatar_url AS landlord_avatar
+       FROM properties p
+       LEFT JOIN users u ON u.id = p.landlord_id
+       WHERE p.category_id = $1
+       ORDER BY p.created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [cat[0].id, limit, offset]
+    );
 
-    if (error) throw error;
+    const { rows: [{ count }] } = await query(
+      'SELECT COUNT(*) FROM properties WHERE category_id = $1',
+      [cat[0].id]
+    );
 
     res.json({
       properties,
       pagination: {
         page,
         limit,
-        total: count,
-        totalPages: Math.ceil(count / limit),
+        total: parseInt(count),
+        totalPages: Math.ceil(parseInt(count) / limit),
       },
     });
   } catch (error) {
