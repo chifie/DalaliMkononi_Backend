@@ -1,4 +1,4 @@
-import { supabase } from '../index.js';
+import { supabase } from '../db/supabase.js';
 
 export const getAllProperties = async (req, res, next) => {
   try {
@@ -30,6 +30,15 @@ export const getAllProperties = async (req, res, next) => {
       query = query.eq('status', req.query.status);
     }
 
+    if (req.query.vacant) {
+      const isVacant = req.query.vacant === 'true';
+      query = query.eq('vacant', isVacant);
+    }
+
+    if (req.query.is_verified) {
+      query = query.eq('is_verified', req.query.is_verified === 'true');
+    }
+
     if (req.query.min_price) {
       query = query.gte('price', parseFloat(req.query.min_price));
     }
@@ -50,6 +59,10 @@ export const getAllProperties = async (req, res, next) => {
       query = query.eq('is_featured', true);
     }
 
+    if (req.query.landlord_id) {
+      query = query.eq('landlord_id', req.query.landlord_id);
+    }
+
     query = query
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
@@ -64,8 +77,8 @@ export const getAllProperties = async (req, res, next) => {
         page,
         limit,
         total: count,
-        totalPages: Math.ceil(count / limit)
-      }
+        totalPages: Math.ceil(count / limit),
+      },
     });
   } catch (error) {
     next(error);
@@ -106,7 +119,8 @@ export const createProperty = async (req, res, next) => {
       category_id,
       images,
       amenities,
-      is_featured
+      is_featured,
+      vacant,
     } = req.body;
 
     const { data: property, error } = await supabase
@@ -124,7 +138,8 @@ export const createProperty = async (req, res, next) => {
         landlord_id: req.user.id,
         images: images || [],
         amenities: amenities || [],
-        is_featured: is_featured || false
+        is_featured: is_featured || false,
+        vacant: vacant !== undefined ? vacant : true,
       })
       .select('*, category:categories(id, name, slug)')
       .single();
@@ -133,7 +148,7 @@ export const createProperty = async (req, res, next) => {
 
     res.status(201).json({
       message: 'Property created successfully',
-      property
+      property,
     });
   } catch (error) {
     next(error);
@@ -143,21 +158,6 @@ export const createProperty = async (req, res, next) => {
 export const updateProperty = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const {
-      title,
-      description,
-      price,
-      location,
-      address,
-      bedrooms,
-      bathrooms,
-      area_sqm,
-      category_id,
-      status,
-      images,
-      amenities,
-      is_featured
-    } = req.body;
 
     const { data: existingProperty, error: findError } = await supabase
       .from('properties')
@@ -173,23 +173,24 @@ export const updateProperty = async (req, res, next) => {
       return res.status(403).json({ error: 'Not authorized to update this property' });
     }
 
-    const updateData = {
-      updated_at: new Date().toISOString()
-    };
+    const allowed = [
+      'title', 'description', 'price', 'location', 'address',
+      'bedrooms', 'bathrooms', 'area_sqm', 'category_id',
+      'status', 'images', 'amenities', 'is_featured', 'vacant',
+    ];
 
-    if (title !== undefined) updateData.title = title;
-    if (description !== undefined) updateData.description = description;
-    if (price !== undefined) updateData.price = price;
-    if (location !== undefined) updateData.location = location;
-    if (address !== undefined) updateData.address = address;
-    if (bedrooms !== undefined) updateData.bedrooms = bedrooms;
-    if (bathrooms !== undefined) updateData.bathrooms = bathrooms;
-    if (area_sqm !== undefined) updateData.area_sqm = area_sqm;
-    if (category_id !== undefined) updateData.category_id = category_id;
-    if (status !== undefined) updateData.status = status;
-    if (images !== undefined) updateData.images = images;
-    if (amenities !== undefined) updateData.amenities = amenities;
-    if (is_featured !== undefined) updateData.is_featured = is_featured;
+    const updateData = { updated_at: new Date().toISOString() };
+
+    for (const key of allowed) {
+      if (req.body[key] !== undefined) {
+        updateData[key] = req.body[key];
+      }
+    }
+
+    // Admin-only fields
+    if (req.user.role !== 'admin') {
+      delete updateData.is_verified;
+    }
 
     const { data: property, error } = await supabase
       .from('properties')
@@ -202,7 +203,7 @@ export const updateProperty = async (req, res, next) => {
 
     res.json({
       message: 'Property updated successfully',
-      property
+      property,
     });
   } catch (error) {
     next(error);
@@ -227,10 +228,7 @@ export const deleteProperty = async (req, res, next) => {
       return res.status(403).json({ error: 'Not authorized to delete this property' });
     }
 
-    const { error } = await supabase
-      .from('properties')
-      .delete()
-      .eq('id', id);
+    const { error } = await supabase.from('properties').delete().eq('id', id);
 
     if (error) throw error;
 
@@ -261,8 +259,8 @@ export const getMyProperties = async (req, res, next) => {
         page,
         limit,
         total: count,
-        totalPages: Math.ceil(count / limit)
-      }
+        totalPages: Math.ceil(count / limit),
+      },
     });
   } catch (error) {
     next(error);
@@ -284,6 +282,30 @@ export const getFeaturedProperties = async (req, res, next) => {
     if (error) throw error;
 
     res.json({ properties });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const verifyProperty = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const { data: property, error } = await supabase
+      .from('properties')
+      .update({ is_verified: true, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select('*, category:categories(id, name, slug)')
+      .single();
+
+    if (error || !property) {
+      return res.status(404).json({ error: 'Property not found' });
+    }
+
+    res.json({
+      message: 'Property verified successfully',
+      property,
+    });
   } catch (error) {
     next(error);
   }
