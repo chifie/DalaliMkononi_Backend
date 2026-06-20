@@ -1,6 +1,5 @@
 import jwt from 'jsonwebtoken';
-
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+import { config } from '../config.js';
 
 export const authenticate = async (req, res, next) => {
   try {
@@ -11,12 +10,12 @@ export const authenticate = async (req, res, next) => {
     }
 
     const token = authHeader.substring(7);
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, config.jwtSecret);
 
     req.user = {
-      id: decoded.userId,
+      id: decoded.userId || decoded.id,
       email: decoded.email,
-      role: decoded.role
+      role: decoded.role,
     };
 
     next();
@@ -51,12 +50,12 @@ export const optionalAuth = async (req, res, next) => {
 
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.substring(7);
-      const decoded = jwt.verify(token, JWT_SECRET);
+      const decoded = jwt.verify(token, config.jwtSecret);
 
       req.user = {
-        id: decoded.userId,
+        id: decoded.userId || decoded.id,
         email: decoded.email,
-        role: decoded.role
+        role: decoded.role,
       };
     }
 
