@@ -1,12 +1,12 @@
 # DalaliMkononi Backend
 
-Express.js backend for the DalaliMkononi Tanzania real estate & rental management platform, powered by Supabase PostgreSQL.
+Express.js + PostgreSQL backend for the DalaliMkononi Tanzania real estate & rental management platform.
 
 ## Tech Stack
 
 - **Node.js 18+**
 - **Express.js 4**
-- **Supabase** (PostgreSQL + Auth + RLS)
+- **PostgreSQL 14+** (direct `pg` driver)
 - **JWT** (jsonwebtoken)
 - **bcryptjs** (password hashing)
 - **express-validator** (request validation)
@@ -22,7 +22,9 @@ Express.js backend for the DalaliMkononi Tanzania real estate & rental managemen
 ├── src/
 │   ├── index.js                          # Entry point
 │   ├── config.js                         # Environment config
-│   ├── db/supabase.js                    # Supabase client
+│   ├── db/
+│   │   ├── pool.js                       # PostgreSQL connection pool
+│   │   └── runMigrations.js              # CLI migration runner
 │   ├── middleware/
 │   │   ├── auth.js                       # JWT authentication & authorization
 │   │   ├── errorHandler.js               # Global error handler
@@ -42,9 +44,8 @@ Express.js backend for the DalaliMkononi Tanzania real estate & rental managemen
 │       ├── invoices.routes.js
 │       ├── bookings.routes.js
 │       └── categories.routes.js
-├── supabase/migrations/                  # Database schema & seed
+├── supabase/migrations/                  # Database schema & seed (pure PostgreSQL)
 │   ├── 001_initial_schema.sql
-│   ├── 002_rls_policies.sql
 │   └── 003_seed_data.sql
 ├── .env.example
 └── package.json
@@ -55,7 +56,7 @@ Express.js backend for the DalaliMkononi Tanzania real estate & rental managemen
 ### Prerequisites
 
 - Node.js >= 18
-- Supabase project (free tier works)
+- PostgreSQL 14+ running locally or via cloud provider
 
 ### 1. Clone & install
 
@@ -75,18 +76,23 @@ Edit `.env`:
 
 ```env
 PORT=3001
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+DATABASE_URL=postgresql://postgres:password@localhost:5432/dalali
 JWT_SECRET=your-super-secret-jwt-key-change-in-production
 FRONTEND_URL=http://localhost:8080
 ```
 
-### 3. Run migrations in Supabase SQL Editor
+### 3. Create database & run migrations
 
-1. Go to your Supabase project → SQL Editor
-2. Run `001_initial_schema.sql`
-3. Run `002_rls_policies.sql`
-4. Run `003_seed_data.sql`
+```bash
+# Create the database (one-time)
+createdb dalali
+
+# Run all SQL migrations
+npm run db:migrate
+
+# Seed demo data (optional)
+psql $DATABASE_URL -f supabase/migrations/003_seed_data.sql
+```
 
 ### 4. Start the server
 
@@ -174,19 +180,25 @@ Server runs at `http://localhost:3001`
 
 ## Changelog
 
+### v1.2.0 — PostgreSQL Native
+
+- **Replaced Supabase JS SDK** with direct `pg` (node-postgres) driver
+- All queries are now pure **raw SQL** — no abstraction layer
+- `DATABASE_URL` connection string replaces `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`
+- Added `db:migrate` and `db:seed` npm scripts
+- Removed Supabase-specific RLS policies (access control handled by middleware)
+
 ### v1.1.0
 
 - Added `helmet`, `express-rate-limit`, and `morgan` security/logging middleware
-- Fixed login to accept both **email and phone number** (`identifier` field)
+- Fixed login to accept both **email and phone number**
 - Added **phone uniqueness check** on registration
 - Separated `config.js` module for clean environment handling
 - Added **admin** endpoints: `DELETE /users/:id`, `PATCH /properties/:id/verify`
-- Added **password update** support in profile (`PUT /users/me`)
+- Added password update support in profile (`PUT /users/me`)
 - Added `.env.example`
 - Added `vacant` and `is_verified` columns to `properties` table
 - Added missing categories: **Villas**, **Offices**, **Shops**
 - Fixed inefficient bookings landlord subquery
 - Added `updated_at` auto-update triggers on all tables
-- Moved Supabase client to `db/supabase.js` module
 - Added `vacant` and `is_verified` query filters on properties
-- Added phone index on users table
