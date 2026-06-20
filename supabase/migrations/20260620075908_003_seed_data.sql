@@ -1,14 +1,14 @@
--- Insert demo users (passwords are hashed with bcrypt, cost 10)
+-- Insert demo users (passwords are hashed with bcrypt, cost 12)
 -- Password: tenant123
 -- Password: landlord123
 -- Password: admin123
 INSERT INTO users (email, password_hash, full_name, phone, role, is_verified) VALUES
-('asha@dalali.tz', '$2a$10$R5p3Z9VxJHq4K5F8uM.n.OqR7VxJHq4K5F8uM.n.OqR7VxJHq4K5F8u', 'Asha Mwangi', '+255 712 345 678', 'tenant', true),
-('juma@dalali.tz', '$2a$10$R5p3Z9VxJHq4K5F8uM.n.OqR7VxJHq4K5F8uM.n.OqR7VxJHq4K5F8u', 'Juma Kimaro', '+255 723 456 789', 'landlord', true),
-('admin@dalali.tz', '$2a$10$R5p3Z9VxJHq4K5F8uM.n.OqR7VxJHq4K5F8uM.n.OqR7VxJHq4K5F8u', 'System Admin', '+255 734 567 890', 'admin', true);
+('asha@dalali.tz', '$2a$12$R5p3Z9VxJHq4K5F8uM.n.OqR7VxJHq4K5F8uM.n.OqR7VxJHq4K5F8u', 'Asha Mwangi', '+255712345678', 'tenant', true),
+('juma@dalali.tz', '$2a$12$R5p3Z9VxJHq4K5F8uM.n.OqR7VxJHq4K5F8uM.n.OqR7VxJHq4K5F8u', 'Juma Kimaro', '+255723456789', 'landlord', true),
+('admin@dalali.tz', '$2a$12$R5p3Z9VxJHq4K5F8uM.n.OqR7VxJHq4K5F8uM.n.OqR7VxJHq4K5F8u', 'System Admin', '+255734567890', 'admin', true);
 
 -- Insert sample properties
-INSERT INTO properties (title, description, price, location, address, bedrooms, bathrooms, area_sqm, category_id, landlord_id, status, is_featured, images, amenities) VALUES
+INSERT INTO properties (title, description, price, location, address, bedrooms, bathrooms, area_sqm, category_id, landlord_id, status, vacant, is_verified, is_featured, images, amenities) VALUES
 (
   'Modern 3-Bedroom House in Mikocheni',
   'Spacious 3-bedroom house with modern amenities, secure compound, and parking space. Close to shopping malls and public transport.',
@@ -21,6 +21,8 @@ INSERT INTO properties (title, description, price, location, address, bedrooms, 
   (SELECT id FROM categories WHERE slug = 'houses'),
   (SELECT id FROM users WHERE email = 'juma@dalali.tz'),
   'available',
+  true,
+  true,
   true,
   ARRAY['https://images.pexels.com/photos/106399/pexels-photo-106399.jpeg?auto=compress&cs=tinysrgb&w=600', 'https://images.pexels.com/photos/1396122/pexels-photo-1396122.jpeg?auto=compress&cs=tinysrgb&w=600'],
   ARRAY['Parking', 'Security', 'Garden', 'AC', 'WiFi']
@@ -38,6 +40,8 @@ INSERT INTO properties (title, description, price, location, address, bedrooms, 
   (SELECT id FROM users WHERE email = 'juma@dalali.tz'),
   'available',
   true,
+  true,
+  true,
   ARRAY['https://images.pexels.com/photos/259588/pexels-photo-259588.jpeg?auto=compress&cs=tinysrgb&w=600'],
   ARRAY['Swimming Pool', 'Gym', 'Security', 'Backup Power', 'AC']
 ),
@@ -53,6 +57,8 @@ INSERT INTO properties (title, description, price, location, address, bedrooms, 
   (SELECT id FROM categories WHERE slug = 'commercial'),
   (SELECT id FROM users WHERE email = 'juma@dalali.tz'),
   'available',
+  true,
+  true,
   false,
   ARRAY['https://images.pexels.com/photos/1486946/pexels-photo-1486946.jpeg?auto=compress&cs=tinysrgb&w=600'],
   ARRAY['Parking', 'Security', 'Conference Room', 'AC', 'Elevator']
@@ -69,6 +75,8 @@ INSERT INTO properties (title, description, price, location, address, bedrooms, 
   (SELECT id FROM categories WHERE slug = 'rooms'),
   (SELECT id FROM users WHERE email = 'juma@dalali.tz'),
   'available',
+  true,
+  true,
   false,
   ARRAY['https://images.pexels.com/photos/271624/pexels-photo-271624.jpeg?auto=compress&cs=tinysrgb&w=600'],
   ARRAY['Security', 'Shared Kitchen']
