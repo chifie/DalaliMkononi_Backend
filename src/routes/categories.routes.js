@@ -12,7 +12,7 @@ router.get('/:slug', categoriesController.getCategoryBySlug);
 router.get('/:slug/properties',
   [
     query('page').optional().isInt({ min: 1 }),
-    query('limit').optional().isInt({ min: 1, max: 100 })
+    query('limit').optional().isInt({ min: 1, max: 100 }),
   ],
   validate,
   categoriesController.getCategoryProperties
