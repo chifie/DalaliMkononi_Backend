@@ -11,7 +11,7 @@ router.post('/',
   [
     body('property_id').isUUID().withMessage('Valid property ID required'),
     body('scheduled_at').isISO8601().withMessage('Valid date and time required'),
-    body('notes').optional().trim()
+    body('notes').optional().trim(),
   ],
   validate,
   bookingsController.createBooking
@@ -22,7 +22,7 @@ router.get('/',
   [
     query('page').optional().isInt({ min: 1 }),
     query('limit').optional().isInt({ min: 1, max: 100 }),
-    query('status').optional().isIn(['pending', 'confirmed', 'completed', 'cancelled'])
+    query('status').optional().isIn(['pending', 'confirmed', 'completed', 'cancelled']),
   ],
   validate,
   bookingsController.getMyBookings
@@ -33,7 +33,7 @@ router.get('/:id', authenticate, bookingsController.getBookingById);
 router.put('/:id/status',
   authenticate,
   [
-    body('status').isIn(['pending', 'confirmed', 'completed', 'cancelled']).withMessage('Valid status required')
+    body('status').isIn(['pending', 'confirmed', 'completed', 'cancelled']).withMessage('Valid status required'),
   ],
   validate,
   bookingsController.updateBookingStatus
