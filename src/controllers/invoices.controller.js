@@ -1,4 +1,4 @@
-import { supabase } from '../db/supabase.js';
+import { query } from '../db/pool.js';
 
 export const getMyInvoices = async (req, res, next) => {
   try {
@@ -7,35 +7,52 @@ export const getMyInvoices = async (req, res, next) => {
     const offset = (page - 1) * limit;
     const status = req.query.status;
 
-    let query = supabase
-      .from('invoices')
-      .select('*, property:properties(id, title, location, images), tenant:users!invoices_tenant_id_fkey(id, full_name, phone), landlord:users!invoices_landlord_id_fkey(id, full_name, phone)', { count: 'exact' });
+    const conditions = [];
+    const params = [];
+    let idx = 1;
 
     if (req.user.role === 'tenant') {
-      query = query.eq('tenant_id', req.user.id);
+      conditions.push(`i.tenant_id = $${idx++}`);
+      params.push(req.user.id);
     } else if (req.user.role === 'landlord') {
-      query = query.eq('landlord_id', req.user.id);
+      conditions.push(`i.landlord_id = $${idx++}`);
+      params.push(req.user.id);
     }
 
     if (status) {
-      query = query.eq('status', status);
+      conditions.push(`i.status = $${idx++}`);
+      params.push(status);
     }
 
-    query = query
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const { data: invoices, error, count } = await query;
+    const { rows: invoices } = await query(
+      `SELECT i.*,
+              p.title AS property_title, p.location AS property_location, p.images AS property_images,
+              t.full_name AS tenant_name, t.phone AS tenant_phone,
+              l.full_name AS landlord_name, l.phone AS landlord_phone
+       FROM invoices i
+       LEFT JOIN properties p ON p.id = i.property_id
+       LEFT JOIN users t ON t.id = i.tenant_id
+       LEFT JOIN users l ON l.id = i.landlord_id
+       ${where}
+       ORDER BY i.created_at DESC
+       LIMIT $${idx++} OFFSET $${idx++}`,
+      [...params, limit, offset]
+    );
 
-    if (error) throw error;
+    const { rows: [{ count }] } = await query(
+      `SELECT COUNT(*) FROM invoices i ${where}`,
+      params
+    );
 
     res.json({
       invoices,
       pagination: {
         page,
         limit,
-        total: count,
-        totalPages: Math.ceil(count / limit),
+        total: parseInt(count),
+        totalPages: Math.ceil(parseInt(count) / limit),
       },
     });
   } catch (error) {
@@ -45,17 +62,24 @@ export const getMyInvoices = async (req, res, next) => {
 
 export const getInvoiceById = async (req, res, next) => {
   try {
-    const { id } = req.params;
+    const { rows } = await query(
+      `SELECT i.*,
+              p.title AS property_title, p.location AS property_location, p.images AS property_images, p.address AS property_address,
+              t.full_name AS tenant_name, t.phone AS tenant_phone, t.email AS tenant_email,
+              l.full_name AS landlord_name, l.phone AS landlord_phone, l.email AS landlord_email
+       FROM invoices i
+       LEFT JOIN properties p ON p.id = i.property_id
+       LEFT JOIN users t ON t.id = i.tenant_id
+       LEFT JOIN users l ON l.id = i.landlord_id
+       WHERE i.id = $1`,
+      [req.params.id]
+    );
 
-    const { data: invoice, error } = await supabase
-      .from('invoices')
-      .select('*, property:properties(id, title, location, images, address), tenant:users!invoices_tenant_id_fkey(id, full_name, phone, email), landlord:users!invoices_landlord_id_fkey(id, full_name, phone, email)')
-      .eq('id', id)
-      .single();
-
-    if (error || !invoice) {
+    if (!rows.length) {
       return res.status(404).json({ error: 'Invoice not found' });
     }
+
+    const invoice = rows[0];
 
     if (req.user.role === 'tenant' && invoice.tenant_id !== req.user.id) {
       return res.status(403).json({ error: 'Not authorized to view this invoice' });
@@ -75,35 +99,24 @@ export const createInvoice = async (req, res, next) => {
   try {
     const { tenant_id, property_id, amount, due_date, description } = req.body;
 
-    const { data: property, error: propertyError } = await supabase
-      .from('properties')
-      .select('landlord_id')
-      .eq('id', property_id)
-      .single();
+    const { rows: prop } = await query(
+      'SELECT landlord_id FROM properties WHERE id = $1', [property_id]
+    );
 
-    if (propertyError || !property) {
+    if (!prop.length) {
       return res.status(404).json({ error: 'Property not found' });
     }
 
-    if (property.landlord_id !== req.user.id && req.user.role !== 'admin') {
+    if (prop[0].landlord_id !== req.user.id && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Not authorized to create invoice for this property' });
     }
 
-    const { data: invoice, error } = await supabase
-      .from('invoices')
-      .insert({
-        tenant_id,
-        landlord_id: req.user.id,
-        property_id,
-        amount,
-        due_date,
-        description,
-        status: 'pending',
-      })
-      .select('*, property:properties(id, title), tenant:users!invoices_tenant_id_fkey(id, full_name)')
-      .single();
-
-    if (error) throw error;
+    const { rows: [invoice] } = await query(
+      `INSERT INTO invoices (tenant_id, landlord_id, property_id, amount, due_date, description, status)
+       VALUES ($1, $2, $3, $4, $5, $6, 'pending')
+       RETURNING *`,
+      [tenant_id, req.user.id, property_id, amount, due_date, description || null]
+    );
 
     res.status(201).json({
       message: 'Invoice created successfully',
@@ -119,15 +132,13 @@ export const payInvoice = async (req, res, next) => {
     const { id } = req.params;
     const { payment_method, payment_reference } = req.body;
 
-    const { data: invoice, error: findError } = await supabase
-      .from('invoices')
-      .select('*')
-      .eq('id', id)
-      .single();
+    const { rows } = await query('SELECT * FROM invoices WHERE id = $1', [id]);
 
-    if (findError || !invoice) {
+    if (!rows.length) {
       return res.status(404).json({ error: 'Invoice not found' });
     }
+
+    const invoice = rows[0];
 
     if (req.user.role === 'tenant' && invoice.tenant_id !== req.user.id) {
       return res.status(403).json({ error: 'Not authorized to pay this invoice' });
@@ -141,24 +152,16 @@ export const payInvoice = async (req, res, next) => {
       return res.status(400).json({ error: 'Invoice has been cancelled' });
     }
 
-    const { data: updatedInvoice, error } = await supabase
-      .from('invoices')
-      .update({
-        status: 'paid',
-        payment_method,
-        payment_reference,
-        paid_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id)
-      .select('*, property:properties(id, title), tenant:users!invoices_tenant_id_fkey(id, full_name)')
-      .single();
-
-    if (error) throw error;
+    const { rows: updated } = await query(
+      `UPDATE invoices
+       SET status = 'paid', payment_method = $1, payment_reference = $2, paid_at = NOW(), updated_at = NOW()
+       WHERE id = $3 RETURNING *`,
+      [payment_method, payment_reference, id]
+    );
 
     res.json({
       message: 'Payment successful',
-      invoice: updatedInvoice,
+      invoice: updated[0],
     });
   } catch (error) {
     next(error);
@@ -170,32 +173,24 @@ export const updateInvoiceStatus = async (req, res, next) => {
     const { id } = req.params;
     const { status } = req.body;
 
-    const { data: invoice, error: findError } = await supabase
-      .from('invoices')
-      .select('landlord_id')
-      .eq('id', id)
-      .single();
+    const { rows } = await query('SELECT landlord_id FROM invoices WHERE id = $1', [id]);
 
-    if (findError || !invoice) {
+    if (!rows.length) {
       return res.status(404).json({ error: 'Invoice not found' });
     }
 
-    if (req.user.role === 'landlord' && invoice.landlord_id !== req.user.id) {
+    if (req.user.role === 'landlord' && rows[0].landlord_id !== req.user.id) {
       return res.status(403).json({ error: 'Not authorized to update this invoice' });
     }
 
-    const { data: updatedInvoice, error } = await supabase
-      .from('invoices')
-      .update({ status, updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .select('*, property:properties(id, title)')
-      .single();
-
-    if (error) throw error;
+    const { rows: updated } = await query(
+      'UPDATE invoices SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
+      [status, id]
+    );
 
     res.json({
       message: 'Invoice status updated',
-      invoice: updatedInvoice,
+      invoice: updated[0],
     });
   } catch (error) {
     next(error);
@@ -204,30 +199,21 @@ export const updateInvoiceStatus = async (req, res, next) => {
 
 export const deleteInvoice = async (req, res, next) => {
   try {
-    const { id } = req.params;
+    const { rows } = await query('SELECT landlord_id, status FROM invoices WHERE id = $1', [req.params.id]);
 
-    const { data: invoice, error: findError } = await supabase
-      .from('invoices')
-      .select('landlord_id, status')
-      .eq('id', id)
-      .single();
-
-    if (findError || !invoice) {
+    if (!rows.length) {
       return res.status(404).json({ error: 'Invoice not found' });
     }
 
-    if (invoice.landlord_id !== req.user.id && req.user.role !== 'admin') {
+    if (rows[0].landlord_id !== req.user.id && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Not authorized to delete this invoice' });
     }
 
-    if (invoice.status === 'paid') {
+    if (rows[0].status === 'paid') {
       return res.status(400).json({ error: 'Cannot delete paid invoice' });
     }
 
-    const { error } = await supabase.from('invoices').delete().eq('id', id);
-
-    if (error) throw error;
-
+    await query('DELETE FROM invoices WHERE id = $1', [req.params.id]);
     res.json({ message: 'Invoice deleted successfully' });
   } catch (error) {
     next(error);
