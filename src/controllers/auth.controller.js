@@ -1,19 +1,13 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { supabase } from '../index.js';
-
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+import { config } from '../config.js';
+import { supabase } from '../db/supabase.js';
 
 const generateToken = (user) => {
   return jwt.sign(
-    {
-      userId: user.id,
-      email: user.email,
-      role: user.role
-    },
-    JWT_SECRET,
-    { expiresIn: JWT_EXPIRES_IN }
+    { userId: user.id, email: user.email, role: user.role },
+    config.jwtSecret,
+    { expiresIn: config.jwtExpiresIn }
   );
 };
 
@@ -21,26 +15,40 @@ export const register = async (req, res, next) => {
   try {
     const { email, password, full_name, phone, role } = req.body;
 
-    const { data: existingUser } = await supabase
+    // Check email uniqueness
+    const { data: existingEmail } = await supabase
       .from('users')
       .select('id')
-      .eq('email', email)
-      .single();
+      .eq('email', email.toLowerCase())
+      .maybeSingle();
 
-    if (existingUser) {
+    if (existingEmail) {
       return res.status(409).json({ error: 'Email already registered' });
     }
 
-    const password_hash = await bcrypt.hash(password, 10);
+    // Check phone uniqueness (if provided)
+    if (phone) {
+      const { data: existingPhone } = await supabase
+        .from('users')
+        .select('id')
+        .eq('phone', phone)
+        .maybeSingle();
+
+      if (existingPhone) {
+        return res.status(409).json({ error: 'Phone number already registered' });
+      }
+    }
+
+    const password_hash = await bcrypt.hash(password, 12);
 
     const { data: user, error } = await supabase
       .from('users')
       .insert({
-        email,
+        email: email.toLowerCase(),
         password_hash,
         full_name,
         phone,
-        role: role || 'tenant'
+        role: role || 'tenant',
       })
       .select('id, email, full_name, phone, role, avatar_url, is_verified, created_at')
       .single();
@@ -52,7 +60,7 @@ export const register = async (req, res, next) => {
     res.status(201).json({
       message: 'Registration successful',
       user,
-      token
+      token,
     });
   } catch (error) {
     next(error);
@@ -61,44 +69,54 @@ export const register = async (req, res, next) => {
 
 export const login = async (req, res, next) => {
   try {
-    const { email, password } = req.body;
+    const { identifier, password } = req.body;
 
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', email)
-      .single();
+    if (!identifier || !password) {
+      return res.status(400).json({ error: 'Identifier and password are required' });
+    }
 
-    if (error || !user) {
-      return res.status(401).json({ error: 'Invalid email or password' });
+    const id = identifier.trim().toLowerCase();
+
+    // Try email first, then phone
+    let query = supabase.from('users').select('*').eq('email', id);
+    let { data: user, error } = await query.maybeSingle();
+
+    // If not found by email, try phone
+    if (!user) {
+      const phoneResult = await supabase
+        .from('users')
+        .select('*')
+        .eq('phone', identifier.trim())
+        .maybeSingle();
+      user = phoneResult.data;
+      error = phoneResult.error;
+    }
+
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid email/phone or password' });
     }
 
     const isValidPassword = await bcrypt.compare(password, user.password_hash);
 
     if (!isValidPassword) {
-      return res.status(401).json({ error: 'Invalid email or password' });
+      return res.status(401).json({ error: 'Invalid email/phone or password' });
     }
 
     const token = generateToken(user);
-
-    const { password_hash, ...userWithoutPassword } = user;
+    const { password_hash: _pw, ...userWithoutPassword } = user;
 
     res.json({
       message: 'Login successful',
       user: userWithoutPassword,
-      token
+      token,
     });
   } catch (error) {
     next(error);
   }
 };
 
-export const logout = async (req, res, next) => {
-  try {
-    res.json({ message: 'Logout successful' });
-  } catch (error) {
-    next(error);
-  }
+export const logout = async (_req, res, _next) => {
+  res.json({ message: 'Logout successful' });
 };
 
 export const getMe = async (req, res, next) => {
