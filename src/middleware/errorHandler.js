@@ -1,20 +1,23 @@
 const errorHandler = (err, req, res, next) => {
   console.error('Error:', err);
 
+  // PostgreSQL / Supabase unique constraint violation
   if (err.code === '23505') {
     return res.status(409).json({
       error: 'Duplicate entry',
-      detail: err.detail
+      detail: err.detail,
     });
   }
 
+  // PostgreSQL / Supabase foreign key violation
   if (err.code === '23503') {
     return res.status(400).json({
       error: 'Referenced record not found',
-      detail: err.detail
+      detail: err.detail,
     });
   }
 
+  // Supabase auth error
   if (err.name === 'UnauthorizedError') {
     return res.status(401).json({ error: 'Invalid token' });
   }
@@ -24,7 +27,7 @@ const errorHandler = (err, req, res, next) => {
 
   res.status(statusCode).json({
     error: message,
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
   });
 };
 
