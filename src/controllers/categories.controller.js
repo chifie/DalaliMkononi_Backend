@@ -1,4 +1,4 @@
-import { supabase } from '../index.js';
+import { supabase } from '../db/supabase.js';
 
 export const getAllCategories = async (req, res, next) => {
   try {
@@ -67,8 +67,8 @@ export const getCategoryProperties = async (req, res, next) => {
         page,
         limit,
         total: count,
-        totalPages: Math.ceil(count / limit)
-      }
+        totalPages: Math.ceil(count / limit),
+      },
     });
   } catch (error) {
     next(error);
