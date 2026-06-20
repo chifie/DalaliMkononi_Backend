@@ -1,4 +1,4 @@
-import { supabase } from '../index.js';
+import { supabase } from '../db/supabase.js';
 
 export const getMyInvoices = async (req, res, next) => {
   try {
@@ -35,8 +35,8 @@ export const getMyInvoices = async (req, res, next) => {
         page,
         limit,
         total: count,
-        totalPages: Math.ceil(count / limit)
-      }
+        totalPages: Math.ceil(count / limit),
+      },
     });
   } catch (error) {
     next(error);
@@ -73,13 +73,7 @@ export const getInvoiceById = async (req, res, next) => {
 
 export const createInvoice = async (req, res, next) => {
   try {
-    const {
-      tenant_id,
-      property_id,
-      amount,
-      due_date,
-      description
-    } = req.body;
+    const { tenant_id, property_id, amount, due_date, description } = req.body;
 
     const { data: property, error: propertyError } = await supabase
       .from('properties')
@@ -104,7 +98,7 @@ export const createInvoice = async (req, res, next) => {
         amount,
         due_date,
         description,
-        status: 'pending'
+        status: 'pending',
       })
       .select('*, property:properties(id, title), tenant:users!invoices_tenant_id_fkey(id, full_name)')
       .single();
@@ -113,7 +107,7 @@ export const createInvoice = async (req, res, next) => {
 
     res.status(201).json({
       message: 'Invoice created successfully',
-      invoice
+      invoice,
     });
   } catch (error) {
     next(error);
@@ -154,7 +148,7 @@ export const payInvoice = async (req, res, next) => {
         payment_method,
         payment_reference,
         paid_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
       })
       .eq('id', id)
       .select('*, property:properties(id, title), tenant:users!invoices_tenant_id_fkey(id, full_name)')
@@ -164,7 +158,7 @@ export const payInvoice = async (req, res, next) => {
 
     res.json({
       message: 'Payment successful',
-      invoice: updatedInvoice
+      invoice: updatedInvoice,
     });
   } catch (error) {
     next(error);
@@ -190,14 +184,9 @@ export const updateInvoiceStatus = async (req, res, next) => {
       return res.status(403).json({ error: 'Not authorized to update this invoice' });
     }
 
-    const updateData = {
-      status,
-      updated_at: new Date().toISOString()
-    };
-
     const { data: updatedInvoice, error } = await supabase
       .from('invoices')
-      .update(updateData)
+      .update({ status, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select('*, property:properties(id, title)')
       .single();
@@ -206,7 +195,7 @@ export const updateInvoiceStatus = async (req, res, next) => {
 
     res.json({
       message: 'Invoice status updated',
-      invoice: updatedInvoice
+      invoice: updatedInvoice,
     });
   } catch (error) {
     next(error);
@@ -235,10 +224,7 @@ export const deleteInvoice = async (req, res, next) => {
       return res.status(400).json({ error: 'Cannot delete paid invoice' });
     }
 
-    const { error } = await supabase
-      .from('invoices')
-      .delete()
-      .eq('id', id);
+    const { error } = await supabase.from('invoices').delete().eq('id', id);
 
     if (error) throw error;
 
