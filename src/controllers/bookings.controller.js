@@ -1,4 +1,4 @@
-import { supabase } from '../index.js';
+import { supabase } from '../db/supabase.js';
 
 export const createBooking = async (req, res, next) => {
   try {
@@ -6,7 +6,7 @@ export const createBooking = async (req, res, next) => {
 
     const { data: property, error: propertyError } = await supabase
       .from('properties')
-      .select('id, status')
+      .select('id, status, vacant')
       .eq('id', property_id)
       .single();
 
@@ -14,7 +14,7 @@ export const createBooking = async (req, res, next) => {
       return res.status(404).json({ error: 'Property not found' });
     }
 
-    if (property.status !== 'available') {
+    if (property.status !== 'available' || property.vacant === false) {
       return res.status(400).json({ error: 'Property is not available for viewing' });
     }
 
@@ -25,7 +25,7 @@ export const createBooking = async (req, res, next) => {
         tenant_id: req.user.id,
         scheduled_at,
         notes,
-        status: 'pending'
+        status: 'pending',
       })
       .select('*, property:properties(id, title, location, images), tenant:users(id, full_name, phone)')
       .single();
@@ -34,7 +34,7 @@ export const createBooking = async (req, res, next) => {
 
     res.status(201).json({
       message: 'Booking created successfully',
-      booking
+      booking,
     });
   } catch (error) {
     next(error);
@@ -48,6 +48,16 @@ export const getMyBookings = async (req, res, next) => {
     const offset = (page - 1) * limit;
     const status = req.query.status;
 
+    // Fetch landlord's property IDs once (if landlord)
+    let landlordPropertyIds = [];
+    if (req.user.role === 'landlord') {
+      const { data: props } = await supabase
+        .from('properties')
+        .select('id')
+        .eq('landlord_id', req.user.id);
+      landlordPropertyIds = props?.map(p => p.id) || [];
+    }
+
     let query = supabase
       .from('bookings')
       .select('*, property:properties(id, title, location, images, landlord:users!properties_landlord_id_fkey(id, full_name, phone))', { count: 'exact' });
@@ -55,9 +65,10 @@ export const getMyBookings = async (req, res, next) => {
     if (req.user.role === 'tenant') {
       query = query.eq('tenant_id', req.user.id);
     } else if (req.user.role === 'landlord') {
-      query = query.in('property_id',
-        (await supabase.from('properties').select('id').eq('landlord_id', req.user.id)).data?.map(p => p.id) || []
-      );
+      if (landlordPropertyIds.length === 0) {
+        return res.json({ bookings: [], pagination: { page, limit, total: 0, totalPages: 0 } });
+      }
+      query = query.in('property_id', landlordPropertyIds);
     }
 
     if (status) {
@@ -78,8 +89,8 @@ export const getMyBookings = async (req, res, next) => {
         page,
         limit,
         total: count,
-        totalPages: Math.ceil(count / limit)
-      }
+        totalPages: Math.ceil(count / limit),
+      },
     });
   } catch (error) {
     next(error);
@@ -140,10 +151,7 @@ export const updateBookingStatus = async (req, res, next) => {
 
     const { data: updatedBooking, error } = await supabase
       .from('bookings')
-      .update({
-        status,
-        updated_at: new Date().toISOString()
-      })
+      .update({ status, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select('*, property:properties(id, title, location), tenant:users(id, full_name, phone)')
       .single();
@@ -152,7 +160,7 @@ export const updateBookingStatus = async (req, res, next) => {
 
     res.json({
       message: 'Booking status updated',
-      booking: updatedBooking
+      booking: updatedBooking,
     });
   } catch (error) {
     next(error);
@@ -187,10 +195,7 @@ export const cancelBooking = async (req, res, next) => {
 
     const { error } = await supabase
       .from('bookings')
-      .update({
-        status: 'cancelled',
-        updated_at: new Date().toISOString()
-      })
+      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
       .eq('id', id);
 
     if (error) throw error;
