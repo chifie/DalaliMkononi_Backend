@@ -1,19 +1,18 @@
 import bcrypt from 'bcryptjs';
-import { supabase } from '../db/supabase.js';
+import { query } from '../db/pool.js';
 
 export const getProfile = async (req, res, next) => {
   try {
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('id, email, full_name, phone, role, avatar_url, is_verified, created_at, updated_at')
-      .eq('id', req.user.id)
-      .single();
+    const { rows } = await query(
+      'SELECT id, email, full_name, phone, role, avatar_url, is_verified, created_at, updated_at FROM users WHERE id = $1',
+      [req.user.id]
+    );
 
-    if (error || !user) {
+    if (!rows.length) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    res.json({ user });
+    res.json({ user: rows[0] });
   } catch (error) {
     next(error);
   }
@@ -23,29 +22,33 @@ export const updateProfile = async (req, res, next) => {
   try {
     const { full_name, phone, avatar_url, password } = req.body;
 
-    const updateData = { updated_at: new Date().toISOString() };
+    const fields = [];
+    const values = [];
+    let idx = 1;
 
-    if (full_name !== undefined) updateData.full_name = full_name;
-    if (phone !== undefined) updateData.phone = phone;
-    if (avatar_url !== undefined) updateData.avatar_url = avatar_url;
-    if (password) updateData.password_hash = await bcrypt.hash(password, 12);
+    if (full_name !== undefined) { fields.push(`full_name = $${idx++}`); values.push(full_name); }
+    if (phone !== undefined)     { fields.push(`phone = $${idx++}`); values.push(phone); }
+    if (avatar_url !== undefined){ fields.push(`avatar_url = $${idx++}`); values.push(avatar_url); }
+    if (password) {
+      fields.push(`password_hash = $${idx++}`);
+      values.push(await bcrypt.hash(password, 12));
+    }
 
-    if (Object.keys(updateData).length === 1) {
+    if (!fields.length) {
       return res.status(400).json({ error: 'No fields to update' });
     }
 
-    const { data: user, error } = await supabase
-      .from('users')
-      .update(updateData)
-      .eq('id', req.user.id)
-      .select('id, email, full_name, phone, role, avatar_url, is_verified, created_at, updated_at')
-      .single();
-
-    if (error) throw error;
+    values.push(req.user.id);
+    const { rows } = await query(
+      `UPDATE users SET ${fields.join(', ')}, updated_at = NOW()
+       WHERE id = $${idx}
+       RETURNING id, email, full_name, phone, role, avatar_url, is_verified, created_at, updated_at`,
+      values
+    );
 
     res.json({
       message: 'Profile updated successfully',
-      user,
+      user: rows[0],
     });
   } catch (error) {
     next(error);
@@ -59,28 +62,33 @@ export const getAllUsers = async (req, res, next) => {
     const offset = (page - 1) * limit;
     const roleFilter = req.query.role;
 
-    let query = supabase
-      .from('users')
-      .select('id, email, full_name, phone, role, avatar_url, is_verified, created_at', { count: 'exact' })
-      .order('created_at', { ascending: false });
-
+    let where = '';
+    const params = [];
     if (roleFilter) {
-      query = query.eq('role', roleFilter);
+      where = 'WHERE role = $1';
+      params.push(roleFilter);
     }
 
-    query = query.range(offset, offset + limit - 1);
+    const { rows: users } = await query(
+      `SELECT id, email, full_name, phone, role, avatar_url, is_verified, created_at
+       FROM users ${where}
+       ORDER BY created_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
 
-    const { data: users, error, count } = await query;
-
-    if (error) throw error;
+    const { rows: [{ count }] } = await query(
+      `SELECT COUNT(*) FROM users ${where}`,
+      roleFilter ? [roleFilter] : []
+    );
 
     res.json({
       users,
       pagination: {
         page,
         limit,
-        total: count,
-        totalPages: Math.ceil(count / limit),
+        total: parseInt(count),
+        totalPages: Math.ceil(parseInt(count) / limit),
       },
     });
   } catch (error) {
@@ -90,19 +98,16 @@ export const getAllUsers = async (req, res, next) => {
 
 export const getUserById = async (req, res, next) => {
   try {
-    const { id } = req.params;
+    const { rows } = await query(
+      'SELECT id, email, full_name, phone, role, avatar_url, is_verified, created_at FROM users WHERE id = $1',
+      [req.params.id]
+    );
 
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('id, email, full_name, phone, role, avatar_url, is_verified, created_at')
-      .eq('id', id)
-      .single();
-
-    if (error || !user) {
+    if (!rows.length) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    res.json({ user });
+    res.json({ user: rows[0] });
   } catch (error) {
     next(error);
   }
@@ -110,26 +115,15 @@ export const getUserById = async (req, res, next) => {
 
 export const deleteUser = async (req, res, next) => {
   try {
-    const { id } = req.params;
-
-    const { data: existing, error: findError } = await supabase
-      .from('users')
-      .select('id')
-      .eq('id', id)
-      .single();
-
-    if (findError || !existing) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    // Prevent self-deletion
-    if (id === req.user.id) {
+    if (req.params.id === req.user.id) {
       return res.status(400).json({ error: 'Cannot delete your own account' });
     }
 
-    const { error } = await supabase.from('users').delete().eq('id', id);
+    const { rowCount } = await query('DELETE FROM users WHERE id = $1', [req.params.id]);
 
-    if (error) throw error;
+    if (!rowCount) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
     res.status(204).send();
   } catch (error) {
@@ -139,15 +133,10 @@ export const deleteUser = async (req, res, next) => {
 
 export const getLandlords = async (req, res, next) => {
   try {
-    const { data: landlords, error } = await supabase
-      .from('users')
-      .select('id, full_name, phone, avatar_url')
-      .eq('role', 'landlord')
-      .order('full_name', { ascending: true });
-
-    if (error) throw error;
-
-    res.json({ landlords });
+    const { rows } = await query(
+      "SELECT id, full_name, phone, avatar_url FROM users WHERE role = 'landlord' ORDER BY full_name ASC"
+    );
+    res.json({ landlords: rows });
   } catch (error) {
     next(error);
   }
