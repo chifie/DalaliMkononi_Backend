@@ -1,4 +1,4 @@
-import { supabase } from '../db/supabase.js';
+import { query } from '../db/pool.js';
 
 export const getAllProperties = async (req, res, next) => {
   try {
@@ -6,78 +6,87 @@ export const getAllProperties = async (req, res, next) => {
     const limit = parseInt(req.query.limit) || 20;
     const offset = (page - 1) * limit;
 
-    let query = supabase
-      .from('properties')
-      .select('*, category:categories(id, name, slug), landlord:users!properties_landlord_id_fkey(id, full_name, phone, avatar_url)', { count: 'exact' });
+    const conditions = [];
+    const params = [];
+    let idx = 1;
 
     if (req.query.category) {
-      query = query.eq('category_id', req.query.category);
-    }
-
-    if (req.query.category_slug) {
-      const { data: category } = await supabase
-        .from('categories')
-        .select('id')
-        .eq('slug', req.query.category_slug)
-        .single();
-
-      if (category) {
-        query = query.eq('category_id', category.id);
-      }
+      conditions.push(`p.category_id = $${idx++}`);
+      params.push(req.query.category);
     }
 
     if (req.query.status) {
-      query = query.eq('status', req.query.status);
+      conditions.push(`p.status = $${idx++}`);
+      params.push(req.query.status);
     }
 
     if (req.query.vacant) {
-      const isVacant = req.query.vacant === 'true';
-      query = query.eq('vacant', isVacant);
+      conditions.push(`p.vacant = $${idx++}`);
+      params.push(req.query.vacant === 'true');
     }
 
     if (req.query.is_verified) {
-      query = query.eq('is_verified', req.query.is_verified === 'true');
+      conditions.push(`p.is_verified = $${idx++}`);
+      params.push(req.query.is_verified === 'true');
     }
 
     if (req.query.min_price) {
-      query = query.gte('price', parseFloat(req.query.min_price));
+      conditions.push(`p.price >= $${idx++}`);
+      params.push(parseFloat(req.query.min_price));
     }
 
     if (req.query.max_price) {
-      query = query.lte('price', parseFloat(req.query.max_price));
+      conditions.push(`p.price <= $${idx++}`);
+      params.push(parseFloat(req.query.max_price));
     }
 
     if (req.query.location) {
-      query = query.ilike('location', `%${req.query.location}%`);
+      conditions.push(`p.location ILIKE $${idx++}`);
+      params.push(`%${req.query.location}%`);
     }
 
     if (req.query.bedrooms) {
-      query = query.gte('bedrooms', parseInt(req.query.bedrooms));
+      conditions.push(`p.bedrooms >= $${idx++}`);
+      params.push(parseInt(req.query.bedrooms));
     }
 
     if (req.query.is_featured) {
-      query = query.eq('is_featured', true);
+      conditions.push(`p.is_featured = $${idx++}`);
+      params.push(true);
     }
 
     if (req.query.landlord_id) {
-      query = query.eq('landlord_id', req.query.landlord_id);
+      conditions.push(`p.landlord_id = $${idx++}`);
+      params.push(req.query.landlord_id);
     }
 
-    query = query
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const { data: properties, error, count } = await query;
+    const { rows: properties } = await query(
+      `SELECT p.*,
+              c.id AS category_id, c.name AS category_name, c.slug AS category_slug,
+              u.id AS landlord_user_id, u.full_name AS landlord_name, u.phone AS landlord_phone, u.avatar_url AS landlord_avatar
+       FROM properties p
+       LEFT JOIN categories c ON c.id = p.category_id
+       LEFT JOIN users u ON u.id = p.landlord_id
+       ${where}
+       ORDER BY p.created_at DESC
+       LIMIT $${idx++} OFFSET $${idx++}`,
+      [...params, limit, offset]
+    );
 
-    if (error) throw error;
+    const { rows: [{ count }] } = await query(
+      `SELECT COUNT(*) FROM properties p ${where}`,
+      params
+    );
 
     res.json({
       properties,
       pagination: {
         page,
         limit,
-        total: count,
-        totalPages: Math.ceil(count / limit),
+        total: parseInt(count),
+        totalPages: Math.ceil(parseInt(count) / limit),
       },
     });
   } catch (error) {
@@ -87,19 +96,22 @@ export const getAllProperties = async (req, res, next) => {
 
 export const getPropertyById = async (req, res, next) => {
   try {
-    const { id } = req.params;
+    const { rows } = await query(
+      `SELECT p.*,
+              c.id AS category_id, c.name AS category_name, c.slug AS category_slug,
+              u.id AS landlord_user_id, u.full_name AS landlord_name, u.phone AS landlord_phone, u.avatar_url AS landlord_avatar, u.email AS landlord_email
+       FROM properties p
+       LEFT JOIN categories c ON c.id = p.category_id
+       LEFT JOIN users u ON u.id = p.landlord_id
+       WHERE p.id = $1`,
+      [req.params.id]
+    );
 
-    const { data: property, error } = await supabase
-      .from('properties')
-      .select('*, category:categories(id, name, slug), landlord:users!properties_landlord_id_fkey(id, full_name, phone, avatar_url, email)')
-      .eq('id', id)
-      .single();
-
-    if (error || !property) {
+    if (!rows.length) {
       return res.status(404).json({ error: 'Property not found' });
     }
 
-    res.json({ property });
+    res.json({ property: rows[0] });
   } catch (error) {
     next(error);
   }
@@ -108,43 +120,25 @@ export const getPropertyById = async (req, res, next) => {
 export const createProperty = async (req, res, next) => {
   try {
     const {
-      title,
-      description,
-      price,
-      location,
-      address,
-      bedrooms,
-      bathrooms,
-      area_sqm,
-      category_id,
-      images,
-      amenities,
-      is_featured,
-      vacant,
+      title, description, price, location, address,
+      bedrooms, bathrooms, area_sqm, category_id,
+      images, amenities, is_featured, vacant,
     } = req.body;
 
-    const { data: property, error } = await supabase
-      .from('properties')
-      .insert({
-        title,
-        description,
-        price,
-        location,
-        address,
-        bedrooms,
-        bathrooms,
-        area_sqm,
-        category_id,
-        landlord_id: req.user.id,
-        images: images || [],
-        amenities: amenities || [],
-        is_featured: is_featured || false,
-        vacant: vacant !== undefined ? vacant : true,
-      })
-      .select('*, category:categories(id, name, slug)')
-      .single();
-
-    if (error) throw error;
+    const { rows: [property] } = await query(
+      `INSERT INTO properties
+         (title, description, price, location, address, bedrooms, bathrooms,
+          area_sqm, category_id, landlord_id, images, amenities, is_featured, vacant)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       RETURNING *`,
+      [
+        title, description, price, location, address,
+        bedrooms || null, bathrooms || null, area_sqm || null,
+        category_id, req.user.id,
+        images || '{}', amenities || '{}',
+        is_featured || false, vacant !== undefined ? vacant : true,
+      ]
+    );
 
     res.status(201).json({
       message: 'Property created successfully',
@@ -159,17 +153,16 @@ export const updateProperty = async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    const { data: existingProperty, error: findError } = await supabase
-      .from('properties')
-      .select('landlord_id')
-      .eq('id', id)
-      .single();
+    // Verify ownership
+    const { rows: existing } = await query(
+      'SELECT landlord_id FROM properties WHERE id = $1', [id]
+    );
 
-    if (findError || !existingProperty) {
+    if (!existing.length) {
       return res.status(404).json({ error: 'Property not found' });
     }
 
-    if (existingProperty.landlord_id !== req.user.id && req.user.role !== 'admin') {
+    if (existing[0].landlord_id !== req.user.id && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Not authorized to update this property' });
     }
 
@@ -179,31 +172,36 @@ export const updateProperty = async (req, res, next) => {
       'status', 'images', 'amenities', 'is_featured', 'vacant',
     ];
 
-    const updateData = { updated_at: new Date().toISOString() };
+    const fields = [];
+    const values = [];
+    let idx = 1;
 
     for (const key of allowed) {
       if (req.body[key] !== undefined) {
-        updateData[key] = req.body[key];
+        fields.push(`${key} = $${idx++}`);
+        values.push(req.body[key]);
       }
     }
 
-    // Admin-only fields
     if (req.user.role !== 'admin') {
-      delete updateData.is_verified;
+      const vi = fields.findIndex(f => f.startsWith('is_verified'));
+      if (vi !== -1) { fields.splice(vi, 1); values.splice(vi, 1); }
     }
 
-    const { data: property, error } = await supabase
-      .from('properties')
-      .update(updateData)
-      .eq('id', id)
-      .select('*, category:categories(id, name, slug)')
-      .single();
+    if (!fields.length) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
 
-    if (error) throw error;
+    values.push(id);
+    const { rows } = await query(
+      `UPDATE properties SET ${fields.join(', ')}, updated_at = NOW()
+       WHERE id = $${idx} RETURNING *`,
+      values
+    );
 
     res.json({
       message: 'Property updated successfully',
-      property,
+      property: rows[0],
     });
   } catch (error) {
     next(error);
@@ -212,26 +210,19 @@ export const updateProperty = async (req, res, next) => {
 
 export const deleteProperty = async (req, res, next) => {
   try {
-    const { id } = req.params;
+    const { rows } = await query(
+      'SELECT landlord_id FROM properties WHERE id = $1', [req.params.id]
+    );
 
-    const { data: existingProperty, error: findError } = await supabase
-      .from('properties')
-      .select('landlord_id')
-      .eq('id', id)
-      .single();
-
-    if (findError || !existingProperty) {
+    if (!rows.length) {
       return res.status(404).json({ error: 'Property not found' });
     }
 
-    if (existingProperty.landlord_id !== req.user.id && req.user.role !== 'admin') {
+    if (rows[0].landlord_id !== req.user.id && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Not authorized to delete this property' });
     }
 
-    const { error } = await supabase.from('properties').delete().eq('id', id);
-
-    if (error) throw error;
-
+    await query('DELETE FROM properties WHERE id = $1', [req.params.id]);
     res.json({ message: 'Property deleted successfully' });
   } catch (error) {
     next(error);
@@ -244,22 +235,28 @@ export const getMyProperties = async (req, res, next) => {
     const limit = parseInt(req.query.limit) || 20;
     const offset = (page - 1) * limit;
 
-    const { data: properties, error, count } = await supabase
-      .from('properties')
-      .select('*, category:categories(id, name, slug)', { count: 'exact' })
-      .eq('landlord_id', req.user.id)
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+    const { rows: properties } = await query(
+      `SELECT p.*, c.name AS category_name, c.slug AS category_slug
+       FROM properties p
+       LEFT JOIN categories c ON c.id = p.category_id
+       WHERE p.landlord_id = $1
+       ORDER BY p.created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [req.user.id, limit, offset]
+    );
 
-    if (error) throw error;
+    const { rows: [{ count }] } = await query(
+      'SELECT COUNT(*) FROM properties WHERE landlord_id = $1',
+      [req.user.id]
+    );
 
     res.json({
       properties,
       pagination: {
         page,
         limit,
-        total: count,
-        totalPages: Math.ceil(count / limit),
+        total: parseInt(count),
+        totalPages: Math.ceil(parseInt(count) / limit),
       },
     });
   } catch (error) {
@@ -271,15 +268,18 @@ export const getFeaturedProperties = async (req, res, next) => {
   try {
     const limit = parseInt(req.query.limit) || 6;
 
-    const { data: properties, error } = await supabase
-      .from('properties')
-      .select('*, category:categories(id, name, slug), landlord:users!properties_landlord_id_fkey(id, full_name, phone, avatar_url)')
-      .eq('is_featured', true)
-      .eq('status', 'available')
-      .order('created_at', { ascending: false })
-      .limit(limit);
-
-    if (error) throw error;
+    const { rows: properties } = await query(
+      `SELECT p.*,
+              c.name AS category_name, c.slug AS category_slug,
+              u.full_name AS landlord_name, u.phone AS landlord_phone, u.avatar_url AS landlord_avatar
+       FROM properties p
+       LEFT JOIN categories c ON c.id = p.category_id
+       LEFT JOIN users u ON u.id = p.landlord_id
+       WHERE p.is_featured = true AND p.status = 'available'
+       ORDER BY p.created_at DESC
+       LIMIT $1`,
+      [limit]
+    );
 
     res.json({ properties });
   } catch (error) {
@@ -289,22 +289,19 @@ export const getFeaturedProperties = async (req, res, next) => {
 
 export const verifyProperty = async (req, res, next) => {
   try {
-    const { id } = req.params;
+    const { rows } = await query(
+      `UPDATE properties SET is_verified = true, updated_at = NOW()
+       WHERE id = $1 RETURNING *`,
+      [req.params.id]
+    );
 
-    const { data: property, error } = await supabase
-      .from('properties')
-      .update({ is_verified: true, updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .select('*, category:categories(id, name, slug)')
-      .single();
-
-    if (error || !property) {
+    if (!rows.length) {
       return res.status(404).json({ error: 'Property not found' });
     }
 
     res.json({
       message: 'Property verified successfully',
-      property,
+      property: rows[0],
     });
   } catch (error) {
     next(error);
