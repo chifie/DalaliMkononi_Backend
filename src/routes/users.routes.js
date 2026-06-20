@@ -13,25 +13,29 @@ router.put('/me',
   [
     body('full_name').optional().trim().notEmpty().withMessage('Full name cannot be empty'),
     body('phone').optional().trim(),
-    body('avatar_url').optional().isURL().withMessage('Valid URL required for avatar')
+    body('avatar_url').optional().isURL().withMessage('Valid URL required for avatar'),
+    body('password').optional().isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
   ],
   validate,
   usersController.updateProfile
 );
+
+router.get('/landlords', authenticate, usersController.getLandlords);
 
 router.get('/',
   authenticate,
   authorize('admin'),
   [
     query('page').optional().isInt({ min: 1 }),
-    query('limit').optional().isInt({ min: 1, max: 100 })
+    query('limit').optional().isInt({ min: 1, max: 100 }),
+    query('role').optional().isIn(['tenant', 'landlord', 'admin']).withMessage('Invalid role filter'),
   ],
   validate,
   usersController.getAllUsers
 );
 
-router.get('/landlords', authenticate, usersController.getLandlords);
-
 router.get('/:id', authenticate, authorize('admin'), usersController.getUserById);
+
+router.delete('/:id', authenticate, authorize('admin'), usersController.deleteUser);
 
 export default router;
